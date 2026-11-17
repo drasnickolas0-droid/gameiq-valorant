@@ -15,18 +15,29 @@ export default function Plans() {
   const [selected, setSelected] = useState(null);
   const [confirmEmail, setConfirmEmail] = useState("");
 
+  const [busy, setBusy] = useState(false);
+
   useEffect(() => { buildApi(getToken).get("/plans").then((r) => setPlans(r.data)); }, [getToken]);
 
   const subscribe = async () => {
     if (!selected) return;
+    if (confirmEmail.trim().toLowerCase() !== (me?.email || "").toLowerCase())
+      return toast.error("O e-mail digitado não corresponde à sua conta GAMEIQ");
+    setBusy(true);
     try {
-      const r = await buildApi(getToken).post("/subscription/change", {
-        plan_slug: selected.slug, confirm_email: confirmEmail,
+      const api = buildApi(getToken);
+      if (selected.slug === "free") {
+        await api.post("/subscription/cancel");
+        toast.success("Você voltou ao plano Free");
+        setSelected(null); setConfirmEmail(""); refreshMe?.();
+        return;
+      }
+      const r = await api.post("/payments/checkout", {
+        plan_slug: selected.slug, confirm_email: confirmEmail, origin_url: window.location.origin,
       });
-      toast.success(r.data.demo ? "Plano ativado em modo DEMONSTRAÇÃO" : "Plano atualizado");
-      setSelected(null); setConfirmEmail("");
-      refreshMe?.();
-    } catch (e) { toast.error(e.response?.data?.detail || "Erro"); }
+      window.location.href = r.data.checkout_url;
+    } catch (e) { toast.error(e.response?.data?.detail || "Erro ao iniciar pagamento"); }
+    finally { setBusy(false); }
   };
 
   return (
@@ -34,7 +45,7 @@ export default function Plans() {
       <div>
         <div className="text-xs font-mono uppercase tracking-widest text-cyan-400">Planos</div>
         <h1 className="text-4xl font-black uppercase tracking-tight mt-2">Escolha seu <span className="gradient-text">plano</span></h1>
-        <p className="text-slate-400 mt-2">Modo demonstração ativo — pagamentos reais ficam para quando a integração for configurada.</p>
+        <p className="text-slate-400 mt-2">Pagamento mensal avulso com cartão ou Pix. Cada compra libera 30 dias de acesso; renove quando quiser.</p>
       </div>
 
       <div className="grid md:grid-cols-3 gap-5">
@@ -55,12 +66,12 @@ export default function Plans() {
               ))}
             </ul>
             <button data-testid={`plan-select-${p.slug}`} onClick={() => { setSelected(p); setConfirmEmail(""); }}
-              disabled={me?.plan_slug === p.slug}
+              disabled={me?.plan_slug === p.slug && p.slug === "free"}
               className={`mt-6 w-full py-3 rounded-xl font-bold transition-all ${
-                me?.plan_slug === p.slug ? "bg-white/5 text-slate-400 cursor-not-allowed"
+                me?.plan_slug === p.slug && p.slug === "free" ? "bg-white/5 text-slate-400 cursor-not-allowed"
                 : p.highlighted ? "bg-gradient-to-r from-purple-600 to-cyan-500 glow-purple hover:scale-[1.02]"
                 : "border border-white/10 hover:bg-white/5"}`}>
-              {me?.plan_slug === p.slug ? "Plano atual" : p.price_cents === 0 ? "Começar grátis" : "Escolher plano"}
+              {me?.plan_slug === p.slug ? (p.slug === "free" ? "Plano atual" : "Renovar +30 dias") : p.price_cents === 0 ? "Voltar ao Free" : "Assinar 1 mês"}
             </button>
           </div>
         ))}
@@ -80,7 +91,7 @@ export default function Plans() {
               <div className="font-mono mt-1">{me?.email}</div>
               <div className="text-xs text-slate-400 mt-2">
                 Valor: <span className="font-mono text-white">{selected && (selected.price_cents === 0 ? "R$ 0" : fmtBRL(selected.price_cents))}</span>
-                {" · "}Modo: <span className="text-purple-300 font-semibold">DEMONSTRAÇÃO</span>
+                {" · "}Pagamento: <span className="text-purple-300 font-semibold">{selected?.slug === "free" ? "nenhum" : "Cartão ou Pix · 30 dias"}</span>
               </div>
             </div>
             <label className="block text-sm">Digite seu e-mail para confirmar</label>
@@ -89,8 +100,9 @@ export default function Plans() {
           </div>
           <DialogFooter>
             <button onClick={() => setSelected(null)} className="px-4 py-2 rounded-lg border border-white/10">Cancelar</button>
-            <button data-testid="confirm-subscribe-btn" onClick={subscribe}
-              className="px-4 py-2 rounded-lg bg-gradient-to-r from-purple-600 to-cyan-500 font-bold">Confirmar</button>
+            <button data-testid="confirm-subscribe-btn" onClick={subscribe} disabled={busy}
+              className="px-4 py-2 rounded-lg bg-gradient-to-r from-purple-600 to-cyan-500 font-bold disabled:opacity-50">
+              {busy ? "Aguarde..." : selected?.slug === "free" ? "Voltar ao Free" : "Ir para pagamento"}</button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

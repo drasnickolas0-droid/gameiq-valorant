@@ -17,6 +17,7 @@ import Plans from "@/pages/Plans";
 import Subscription from "@/pages/Subscription";
 import Account from "@/pages/Account";
 import Admin from "@/pages/Admin";
+import { PaymentSuccess, PaymentCancel } from "@/pages/PaymentResult";
 import { Toaster } from "@/components/ui/sonner";
 
 export default function App() {
@@ -42,6 +43,8 @@ export default function App() {
               <Route path="/subscription" element={<Subscription />} />
               <Route path="/account" element={<Account />} />
               <Route path="/admin" element={<Admin />} />
+              <Route path="/payment/success" element={<PaymentSuccess />} />
+              <Route path="/payment/cancel" element={<PaymentCancel />} />
             </Route>
           </Routes>
         </ClerkAuthProvider>

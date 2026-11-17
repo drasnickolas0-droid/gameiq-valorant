@@ -1,5 +1,6 @@
 const MAP = {
   active: "Ativo", active_demo: "Ativo (demonstração)", cancelled: "Cancelado", demo: "Demonstração",
+  paid: "Pago", refunded: "Reembolsado", expired: "Expirado", replaced: "Substituído",
   win: "Vitória", loss: "Derrota", draw: "Empate",
   easy: "Fácil", medium: "Médio", hard: "Difícil",
   manual_linked_pending_riot_approval: "Vinculada manualmente · integração oficial pendente de aprovação Riot",

@@ -19,14 +19,16 @@ export default function Subscription() {
   useEffect(() => { load(); /* eslint-disable-next-line */ }, []);
 
   const cancel = async () => {
-    if (!confirm("Cancelar assinatura? Você voltará ao plano Free.")) return;
+    if (!confirm("Voltar ao plano Free agora? O tempo restante do plano pago será perdido e não há reembolso automático.")) return;
     await buildApi(getToken).post("/subscription/cancel");
-    toast.success("Assinatura cancelada");
+    toast.success("Você voltou ao plano Free");
     refreshMe?.(); load();
   };
 
   if (!sub) return null;
-  const isDemo = sub.status === "active_demo";
+  const isPaid = sub.plan_slug !== "free";
+  const expDate = sub.expires_at ? new Date(sub.expires_at) : null;
+  const daysLeft = expDate ? Math.max(0, Math.ceil((expDate - Date.now()) / 86400000)) : null;
 
   return (
     <div data-testid="subscription-page" className="space-y-6 max-w-4xl">
@@ -35,9 +37,9 @@ export default function Subscription() {
         <h1 className="text-4xl font-black uppercase tracking-tight mt-2">Detalhes do <span className="gradient-text">plano</span></h1>
       </div>
 
-      {isDemo && (
-        <div data-testid="demo-banner" className="p-4 rounded-xl border border-amber-500/40 bg-amber-500/10 text-amber-200 text-sm">
-          ⚠️ Esta assinatura está em <b>modo DEMONSTRAÇÃO</b>. Nenhum pagamento real foi processado. Configure um provedor de pagamentos para ativar cobranças.
+      {isPaid && daysLeft !== null && daysLeft <= 5 && (
+        <div data-testid="renew-banner" className="p-4 rounded-xl border border-amber-500/40 bg-amber-500/10 text-amber-200 text-sm">
+          Seu plano vence em <b>{daysLeft} {daysLeft === 1 ? "dia" : "dias"}</b>. Renove para não perder o acesso — o tempo novo é somado ao que resta.
         </div>
       )}
 
@@ -45,17 +47,17 @@ export default function Subscription() {
         <Row label="Plano atual" value={sub.plan_slug.toUpperCase()} highlight/>
         <Row label="Status" value={<span className={`font-bold ${sub.status === "cancelled" ? "text-red-400" : "text-emerald-400"}`}>{label(sub.status)}</span>}/>
         <Row label="Conta GAMEIQ" value={me?.email}/>
-        <Row label="Valor" value={sub.price_cents === 0 ? "Gratuito" : fmtBRL(sub.price_cents)}/>
+        <Row label="Valor pago" value={sub.price_cents === 0 ? "Gratuito" : fmtBRL(sub.price_cents)}/>
         <Row label="Início" value={sub.started_at?.slice(0, 10) || "—"}/>
-        <Row label="Próxima cobrança" value={sub.next_billing_at?.slice(0, 10) || "—"}/>
+        <Row label="Válido até" value={expDate ? `${expDate.toLocaleDateString("pt-BR")} (${daysLeft}d)` : "—"}/>
         <Row label="Forma de pagamento" value={sub.payment_method || "—"}/>
         <Row label="E-mail da assinatura" value={sub.account_email}/>
       </div>
 
       <div className="flex flex-wrap gap-3">
-        <Link to="/plans" data-testid="sub-change-plan" className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-purple-600 to-cyan-500 font-semibold">Trocar de plano</Link>
-        {sub.plan_slug !== "free" && sub.status !== "cancelled" && (
-          <button data-testid="sub-cancel" onClick={cancel} className="px-5 py-2.5 rounded-xl border border-red-500/40 text-red-300 font-semibold hover:bg-red-500/10">Cancelar assinatura</button>
+        <Link to="/plans" data-testid="sub-change-plan" className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-purple-600 to-cyan-500 font-semibold">{isPaid ? "Renovar ou trocar plano" : "Fazer upgrade"}</Link>
+        {isPaid && (
+          <button data-testid="sub-cancel" onClick={cancel} className="px-5 py-2.5 rounded-xl border border-red-500/40 text-red-300 font-semibold hover:bg-red-500/10">Voltar ao Free agora</button>
         )}
       </div>
 

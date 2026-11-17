@@ -3,12 +3,13 @@ import os
 import uuid
 import logging
 from contextlib import suppress
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import List, Optional, AsyncGenerator
 
 import requests
-from fastapi import FastAPI, APIRouter, HTTPException, Depends
+import stripe
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request
 from fastapi.responses import StreamingResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -26,6 +27,17 @@ FREE_MANUAL_CHALLENGES = 3
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
+stripe.api_key = os.environ.get("STRIPE_SECRET_KEY") or "sk_test_emergent"
+
+
+def stripe_sync_plan(slug: str, name: str, price_cents: int) -> None:
+    try:
+        from backend.setup_stripe import sync
+    except ModuleNotFoundError:
+        from setup_stripe import sync
+    sync([{"emergent_product_id": f"gameiq_{slug}", "name": f"GAMEIQ {name} — 1 mês", "tax_code": "txcd_10103001",
+           "prices": [{"lookup_key": f"gameiq_{slug}_month", "amount": price_cents, "currency": "brl"}]}])
+
 
 try:
     from backend.clerk_auth import clerk_router, require_user
@@ -54,6 +66,8 @@ INDEXES: dict[str, list[IndexModel]] = {
     "matches": [IndexModel([("user_id", ASCENDING), ("played_at", DESCENDING)], name="user_played")],
     "riot_accounts": [IndexModel([("user_id", ASCENDING)], name="user_id", unique=True)],
     "ai_chat": [IndexModel([("user_id", ASCENDING), ("created_at", ASCENDING)], name="user_created")],
+    "payment_transactions": [IndexModel([("session_id", ASCENDING)], name="session_id", unique=True),
+                             IndexModel([("user_id", ASCENDING), ("created_at", DESCENDING)], name="user_created")],
     "ai_usage": [IndexModel([("user_id", ASCENDING), ("month", ASCENDING)], name="user_month", unique=True)],
 }
 
@@ -85,9 +99,6 @@ class PlanUpdate(BaseModel):
 
 class ProfileUpdate(BaseModel):
     display_name: Optional[str] = None; goal: Optional[str] = None; rank: Optional[str] = None
-
-class ChangePlanIn(BaseModel):
-    plan_slug: str; confirm_email: str
 
 class MatchIn(BaseModel):
     agent: str = Field(min_length=1, max_length=30); map: str = Field(min_length=1, max_length=30)
@@ -158,6 +169,12 @@ async def current_member(user: dict = Depends(require_user)) -> dict:
             upsert=True, projection={"_id": 0}, return_document=ReturnDocument.AFTER)
     if member.get("env") != ENV:
         await db.users.update_one({"user_id": uid}, {"$set": {"env": ENV}})
+    exp = member.get("plan_expires_at")
+    if member.get("plan_slug", "free") != "free" and exp and datetime.fromisoformat(exp) < datetime.now(timezone.utc):
+        await db.users.update_one({"user_id": uid}, {"$set": {"plan_slug": "free", "plan_expires_at": None}})
+        await db.subscriptions.update_many({"user_id": uid, "status": "active"},
+                                           {"$set": {"status": "expired", "expired_at": now_iso()}})
+        member = {**member, "plan_slug": "free", "plan_expires_at": None}
     return {**member, "env": ENV, "role": effective_role(member["role"])}
 
 
@@ -244,50 +261,180 @@ async def delete_me(member: dict = Depends(current_member)):
 
 @api_router.get("/subscription")
 async def get_subscription(member: dict = Depends(current_member)):
-    sub = await db.subscriptions.find_one({"user_id": member["user_id"]}, {"_id": 0},
+    sub = await db.subscriptions.find_one({"user_id": member["user_id"], "status": "active"}, {"_id": 0},
                                           sort=[("created_at", -1)])
-    plan = await db.plans.find_one({"slug": member.get("plan_slug", "free")}, {"_id": 0})
-    if not sub or sub["status"] == "cancelled":
-        return {"user_id": member["user_id"], "plan_slug": member.get("plan_slug", "free"), "status": "active",
-                "started_at": member.get("created_at"), "next_billing_at": None,
+    plan_slug = member.get("plan_slug", "free")
+    if not sub or plan_slug == "free":
+        return {"user_id": member["user_id"], "plan_slug": "free", "status": "active",
+                "started_at": member.get("created_at"), "expires_at": None,
                 "payment_method": None, "price_cents": 0, "currency": "BRL",
                 "account_email": member.get("email", "")}
     return {"user_id": member["user_id"], "plan_slug": sub["plan_slug"], "status": sub["status"],
-            "started_at": sub.get("started_at"), "next_billing_at": sub.get("next_billing_at"),
+            "started_at": sub.get("started_at"), "expires_at": sub.get("expires_at"),
             "payment_method": sub.get("payment_method"),
-            "price_cents": plan["price_cents"] if plan else 0,
-            "currency": plan["currency"] if plan else "BRL",
+            "price_cents": sub.get("amount_cents", 0), "currency": "BRL",
             "account_email": member.get("email", "")}
 
 
-@api_router.post("/subscription/change")
-async def change_subscription(body: ChangePlanIn, member: dict = Depends(current_member)):
-    if body.confirm_email.lower() != member.get("email", "").lower():
+class CheckoutIn(BaseModel):
+    plan_slug: Literal["pro", "elite"]
+    confirm_email: str
+    origin_url: str
+
+
+@api_router.post("/payments/checkout")
+async def create_checkout(body: CheckoutIn, member: dict = Depends(current_member)):
+    if body.confirm_email.strip().lower() != member.get("email", "").lower():
         raise HTTPException(status_code=400, detail="E-mail de confirmação não bate com a conta")
+    if not re.match(r"^https?://[^\s/]+$", body.origin_url.rstrip("/")):
+        raise HTTPException(status_code=400, detail="origin_url inválida")
     plan = await db.plans.find_one({"slug": body.plan_slug}, {"_id": 0})
-    if not plan:
+    if not plan or plan["price_cents"] <= 0:
         raise HTTPException(status_code=404, detail="Plano não encontrado")
-    sub = {"id": str(uuid.uuid4()), "user_id": member["user_id"], "plan_slug": body.plan_slug,
-           "status": "active_demo" if body.plan_slug != "free" else "active",
-           "started_at": now_iso(), "next_billing_at": None,
-           "payment_method": "Modo Demonstração" if body.plan_slug != "free" else None,
-           "demo": body.plan_slug != "free", "env": ENV, "created_at": now_iso()}
-    await db.subscriptions.insert_one(sub)
-    await db.users.update_one({"user_id": member["user_id"]}, {"$set": {"plan_slug": body.plan_slug}})
-    if body.plan_slug != "free":
-        await db.payments.insert_one({"id": str(uuid.uuid4()), "user_id": member["user_id"],
-            "plan_slug": body.plan_slug, "amount_cents": plan["price_cents"],
-            "currency": plan["currency"], "status": "demo", "env": ENV,
-            "email": member.get("email", ""), "created_at": now_iso()})
-    return {"ok": True, "demo": body.plan_slug != "free"}
+    origin = body.origin_url.rstrip("/")
+    lookup_key = f"gameiq_{body.plan_slug}_month"
+
+    def _create():
+        prices = stripe.Price.list(lookup_keys=[lookup_key], active=True, limit=1).data
+        if not prices or prices[0].unit_amount != plan["price_cents"]:
+            stripe_sync_plan(body.plan_slug, plan["name"], plan["price_cents"])
+            prices = stripe.Price.list(lookup_keys=[lookup_key], active=True, limit=1).data
+        price = prices[0]
+        session = stripe.checkout.Session.create(
+            line_items=[{"price": price.id, "quantity": 1}], mode="payment",
+            payment_method_types=["card", "pix"],
+            customer_email=member.get("email") or None,
+            success_url=f"{origin}/payment/success?session_id={{CHECKOUT_SESSION_ID}}",
+            cancel_url=f"{origin}/payment/cancel",
+            client_reference_id=member["user_id"],
+            metadata={"user_id": member["user_id"], "plan_slug": body.plan_slug, "lookup_key": lookup_key},
+        )
+        return session, price
+
+    try:
+        session, price = await run_in_threadpool(_create)
+    except stripe.error.StripeError as exc:
+        raise HTTPException(status_code=502, detail=f"Stripe indisponível: {exc.user_message or str(exc)[:200]}")
+    await db.payment_transactions.insert_one({
+        "id": str(uuid.uuid4()), "session_id": session.id, "user_id": member["user_id"],
+        "email": member.get("email", ""), "plan_slug": body.plan_slug, "lookup_key": lookup_key,
+        "amount_cents": price.unit_amount, "currency": price.currency,
+        "status": "initiated", "payment_status": "pending", "fulfilled": False, "env": ENV,
+        "created_at": now_iso(), "updated_at": now_iso(),
+    })
+    return {"checkout_url": session.url, "session_id": session.id}
+
+
+async def fulfill_session(session_id: str, payment_method: Optional[str] = None,
+                          payment_intent: Optional[str] = None) -> None:
+    """Mark paid and activate the plan exactly once."""
+    tx = await db.payment_transactions.find_one_and_update(
+        {"session_id": session_id, "fulfilled": False},
+        {"$set": {"status": "completed", "payment_status": "paid", "fulfilled": True,
+                  "payment_method": payment_method, "stripe_payment_intent_id": payment_intent,
+                  "updated_at": now_iso()}},
+        projection={"_id": 0}, return_document=ReturnDocument.AFTER)
+    if not tx:
+        return
+    now = datetime.now(timezone.utc)
+    user = await db.users.find_one({"user_id": tx["user_id"]}, {"_id": 0})
+    current_exp = None
+    if user and user.get("plan_slug") == tx["plan_slug"] and user.get("plan_expires_at"):
+        current_exp = datetime.fromisoformat(user["plan_expires_at"])
+    base = current_exp if current_exp and current_exp > now else now
+    expires = (base + timedelta(days=30)).isoformat()
+    await db.subscriptions.update_many({"user_id": tx["user_id"], "status": "active"},
+                                       {"$set": {"status": "replaced", "replaced_at": now_iso()}})
+    pm_label = {"card": "Cartão", "pix": "Pix"}.get(payment_method or "", payment_method or "Stripe")
+    await db.subscriptions.insert_one({
+        "id": str(uuid.uuid4()), "user_id": tx["user_id"], "plan_slug": tx["plan_slug"], "status": "active",
+        "started_at": now_iso(), "expires_at": expires, "payment_method": pm_label,
+        "amount_cents": tx["amount_cents"], "session_id": session_id, "env": ENV, "created_at": now_iso(),
+    })
+    await db.users.update_one({"user_id": tx["user_id"]},
+                              {"$set": {"plan_slug": tx["plan_slug"], "plan_expires_at": expires}})
+    await db.payments.insert_one({
+        "id": str(uuid.uuid4()), "user_id": tx["user_id"], "email": tx.get("email", ""),
+        "plan_slug": tx["plan_slug"], "amount_cents": tx["amount_cents"], "currency": tx["currency"].upper(),
+        "status": "paid", "payment_method": pm_label, "session_id": session_id, "env": ENV,
+        "created_at": now_iso(),
+    })
+
+
+def _session_payment_method(s) -> Optional[str]:
+    try:
+        if s.get("payment_intent"):
+            pi = stripe.PaymentIntent.retrieve(s["payment_intent"])
+            types = pi.get("payment_method_types") or []
+            if pi.get("payment_method"):
+                return stripe.PaymentMethod.retrieve(pi["payment_method"]).get("type")
+            return types[0] if types else None
+    except stripe.error.StripeError:
+        return None
+    return None
+
+
+@api_router.get("/payments/status/{session_id}")
+async def payment_status(session_id: str, member: dict = Depends(current_member)):
+    tx = await db.payment_transactions.find_one({"session_id": session_id, "user_id": member["user_id"]}, {"_id": 0})
+    if not tx:
+        raise HTTPException(status_code=404, detail="Transação não encontrada")
+    if tx["payment_status"] not in ("paid", "failed", "expired"):
+        try:
+            s = await run_in_threadpool(stripe.checkout.Session.retrieve, session_id)
+            if s.payment_status == "paid":
+                pm = await run_in_threadpool(_session_payment_method, s)
+                await fulfill_session(session_id, pm, s.get("payment_intent"))
+            elif s.status == "expired":
+                await db.payment_transactions.update_one({"session_id": session_id, "fulfilled": False},
+                    {"$set": {"status": "expired", "payment_status": "expired", "updated_at": now_iso()}})
+            elif s.status == "complete":
+                await db.payment_transactions.update_one({"session_id": session_id, "fulfilled": False},
+                    {"$set": {"status": "awaiting_payment", "updated_at": now_iso()}})
+            tx = await db.payment_transactions.find_one({"session_id": session_id}, {"_id": 0})
+        except stripe.error.StripeError:
+            pass
+    return {"session_id": session_id, "status": tx["status"], "payment_status": tx["payment_status"],
+            "plan_slug": tx["plan_slug"]}
+
+
+@app.post("/api/stripe/webhook")
+async def stripe_webhook(request: Request):
+    payload = await request.body()
+    sig = request.headers.get("stripe-signature", "")
+    try:
+        event = stripe.Webhook.construct_event(payload, sig, os.environ.get("STRIPE_WEBHOOK_SECRET", ""))
+    except (stripe.error.SignatureVerificationError, ValueError):
+        raise HTTPException(status_code=400, detail="Invalid signature")
+    obj, t = event["data"]["object"], event["type"]
+    if t in ("checkout.session.completed", "checkout.session.async_payment_succeeded"):
+        if obj.get("payment_status") == "paid":
+            pm = await run_in_threadpool(_session_payment_method, obj)
+            await fulfill_session(obj["id"], pm, obj.get("payment_intent"))
+        else:
+            await db.payment_transactions.update_one({"session_id": obj["id"], "fulfilled": False},
+                {"$set": {"status": "awaiting_payment", "updated_at": now_iso()}})
+    elif t == "checkout.session.async_payment_failed":
+        await db.payment_transactions.update_one({"session_id": obj["id"], "fulfilled": False},
+            {"$set": {"status": "failed", "payment_status": "failed", "updated_at": now_iso()}})
+    elif t == "checkout.session.expired":
+        await db.payment_transactions.update_one({"session_id": obj["id"], "fulfilled": False},
+            {"$set": {"status": "expired", "payment_status": "expired", "updated_at": now_iso()}})
+    elif t == "charge.refunded":
+        await db.payment_transactions.update_one({"stripe_payment_intent_id": obj.get("payment_intent")},
+            {"$set": {"status": "refunded", "payment_status": "refunded", "updated_at": now_iso()}})
+        await db.payments.update_one({"session_id": {"$exists": True}, "status": "paid",
+                                      "user_id": (obj.get("metadata") or {}).get("user_id", "__none__")},
+                                     {"$set": {"status": "refunded"}})
+    return {"status": "ok"}
 
 
 @api_router.post("/subscription/cancel")
 async def cancel_subscription(member: dict = Depends(current_member)):
-    await db.subscriptions.update_many(
-        {"user_id": member["user_id"], "status": {"$in": ["active", "active_demo"]}},
+    await db.subscriptions.update_many({"user_id": member["user_id"], "status": "active"},
         {"$set": {"status": "cancelled", "cancelled_at": now_iso()}})
-    await db.users.update_one({"user_id": member["user_id"]}, {"$set": {"plan_slug": "free"}})
+    await db.users.update_one({"user_id": member["user_id"]},
+                              {"$set": {"plan_slug": "free", "plan_expires_at": None}})
     return {"ok": True}
 
 
@@ -563,6 +710,12 @@ async def admin_update_plan(slug: str, body: PlanUpdate, admin: dict = Depends(r
     r = await db.plans.update_one({"slug": slug}, {"$set": update})
     if r.matched_count == 0:
         raise HTTPException(status_code=404, detail="Plano não encontrado")
+    plan = await db.plans.find_one({"slug": slug}, {"_id": 0})
+    if slug in ("pro", "elite") and plan["price_cents"] > 0:
+        try:
+            await run_in_threadpool(stripe_sync_plan, slug, plan["name"], plan["price_cents"])
+        except stripe.error.StripeError as exc:
+            raise HTTPException(status_code=502, detail=f"Plano salvo, mas falhou ao atualizar no Stripe: {exc}")
     return {"ok": True}
 
 
