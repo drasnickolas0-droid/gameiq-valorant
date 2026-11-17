@@ -1,57 +1,52 @@
-import { useEffect } from "react";
-import "@/App.css";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
-import axios from "axios";
-import { HOME } from "@/constants/testIds";
+import "@/App.css";
+import ClerkAuthProvider from "@/components/auth/ClerkAuthProvider";
+import AppShell from "@/components/AppShell";
+import Landing from "@/pages/Landing";
+import { SignInPage, SignUpPage } from "@/pages/Auth";
+import Welcome from "@/pages/Welcome";
+import Dashboard from "@/pages/Dashboard";
+import AICoach from "@/pages/AICoach";
+import Weakness from "@/pages/Weakness";
+import Challenges from "@/pages/Challenges";
+import Progress from "@/pages/Progress";
+import Performance from "@/pages/Performance";
+import Profile from "@/pages/Profile";
+import RiotAccount from "@/pages/RiotAccount";
+import Plans from "@/pages/Plans";
+import Subscription from "@/pages/Subscription";
+import Account from "@/pages/Account";
+import Admin from "@/pages/Admin";
+import { Toaster } from "@/components/ui/sonner";
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
-const API = `${BACKEND_URL}/api`;
-
-const Home = () => {
-  const helloWorldApi = async () => {
-    try {
-      const response = await axios.get(`${API}/`);
-      console.log(response.data.message);
-    } catch (e) {
-      console.error(e, `errored out requesting / api`);
-    }
-  };
-
-  useEffect(() => {
-    helloWorldApi();
-  }, []);
-
-  return (
-    // The marker attribute below lets the platform probe detect the stock splash — remove it with this page
-    <div data-emergent-splash>
-      <header className="App-header">
-        <a
-          data-testid={HOME.emergentLink}
-          className="App-link"
-          href="https://emergent.sh"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <img src="https://avatars.githubusercontent.com/in/1201222?s=120&u=2686cf91179bbafbc7a71bfbc43004cf9ae1acea&v=4" />
-        </a>
-        <p className="mt-5">Building something incredible ~!</p>
-      </header>
-    </div>
-  );
-};
-
-function App() {
+export default function App() {
   return (
     <div className="App">
       <BrowserRouter>
-        <Routes>
-          <Route path="/" element={<Home />}>
-            <Route index element={<Home />} />
-          </Route>
-        </Routes>
+        <ClerkAuthProvider>
+          <Routes>
+            <Route path="/" element={<Landing />} />
+            <Route path="/sign-in/*" element={<SignInPage />} />
+            <Route path="/sign-up/*" element={<SignUpPage />} />
+            <Route path="/welcome" element={<Welcome />} />
+            <Route element={<AppShell />}>
+              <Route path="/dashboard" element={<Dashboard />} />
+              <Route path="/ai-coach" element={<AICoach />} />
+              <Route path="/weakness" element={<Weakness />} />
+              <Route path="/challenges" element={<Challenges />} />
+              <Route path="/progress" element={<Progress />} />
+              <Route path="/performance" element={<Performance />} />
+              <Route path="/profile" element={<Profile />} />
+              <Route path="/riot" element={<RiotAccount />} />
+              <Route path="/plans" element={<Plans />} />
+              <Route path="/subscription" element={<Subscription />} />
+              <Route path="/account" element={<Account />} />
+              <Route path="/admin" element={<Admin />} />
+            </Route>
+          </Routes>
+        </ClerkAuthProvider>
+        <Toaster theme="dark" position="top-right" richColors />
       </BrowserRouter>
     </div>
   );
 }
-
-export default App;

@@ -1,0 +1,63 @@
+{
+  "project_name": "GAMEIQ — Your Personal Gaming Coach",
+  "app_type": "saas_app",
+  "archetype": "THE PERFORMANCE PRO / ELECTRIC & NEON",
+  "language_context": "pt-BR",
+  "colors": {
+    "background_dark": "#090A0F",
+    "surface_level_1": "#12141F",
+    "surface_level_2": "#1A1D2E",
+    "surface_hover": "#25293E",
+    "primary_neon_purple": "#A855F7",
+    "primary_purple_dark": "#7E22CE",
+    "accent_cyan": "#06B6D4",
+    "accent_blue": "#3B82F6",
+    "win_green": "#10B981",
+    "loss_red": "#EF4444",
+    "text_primary": "#FFFFFF",
+    "text_secondary": "#E2E8F0",
+    "text_muted": "#94A3B8",
+    "text_subtle": "#64748B",
+    "border_glow_purple": "rgba(168, 85, 247, 0.25)",
+    "border_glow_cyan": "rgba(6, 182, 212, 0.25)"
+  },
+  "typography": {
+    "font_headings": "'Outfit', sans-serif",
+    "font_body": "'Plus Jakarta Sans', sans-serif",
+    "font_mono": "'JetBrains Mono', monospace",
+    "banned_fonts": ["Inter", "Roboto", "Space Grotesk"],
+    "heading_h1": "text-4xl sm:text-5xl lg:text-6xl font-extrabold tracking-tight uppercase",
+    "heading_h2": "text-2xl sm:text-3xl lg:text-4xl font-bold tracking-tight",
+    "heading_h3": "text-xl sm:text-2xl font-semibold",
+    "body_text": "text-sm sm:text-base font-normal leading-relaxed text-slate-300",
+    "stat_number": "font-mono font-bold tracking-wider text-cyan-400"
+  },
+  "responsive": {
+    "breakpoint": "mobile-first",
+    "mobile_sidebar": "Reflows from fixed left sidebar (desktop) into a slide-out bottom sheet/drawer or top header with hamburger/dock navigation on mobile.",
+    "layout": "Grid stacks from single column grid-cols-1 on mobile to multi-column grid-cols-2 lg:grid-cols-4 on desktop.",
+    "touch_targets": "Minimum 44px by 44px for buttons, tabs, and action icons.",
+    "overflow_guard": "Use overflow-x-hidden on layout wrapper and max-w-full on tables with horizontal scroll containers."
+  },
+  "visual_enhancers": {
+    "borders": "1px solid rgba(255, 255, 255, 0.08) with subtle neon purple hover outline",
+    "shadows": "shadow-[0_0_25px_rgba(168,85,247,0.12)] and drop-shadow-[0_0_12px_rgba(6,182,212,0.3)]",
+    "glassmorphism": "backdrop-blur-xl bg-slate-950/80 border border-purple-500/20",
+    "corner_accents": "Tactical bevels, mini status badges, and glowing cyber dots for pro esports aesthetic",
+    "chart_styling": "Recharts with neon purple (#A855F7) and neon cyan (#06B6D4) gradients with dark transparent tooltips"
+  },
+  "media_urls": {
+    "hero_background": "https://images.pexels.com/photos/14266493/pexels-photo-14266493.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+    "esports_setup": "https://images.pexels.com/photos/7862599/pexels-photo-7862599.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+    "player_avatar_1": "https://images.unsplash.com/photo-1610041321420-a596dd14ebc9?crop=entropy&cs=srgb&fm=jpg&q=85",
+    "player_avatar_2": "https://images.pexels.com/photos/15367435/pexels-photo-15367435.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+    "tournament_arena": "https://images.pexels.com/photos/9072293/pexels-photo-9072293.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940"
+  },
+  "instructions_to_main_agent": [
+    "Build the complete GAMEIQ platform in PT-BR with full support for Valorant stats (K/D, ACS, KAST, ADR, Win Rate, Agent/Map breakdown).",
+    "Ensure all interactive elements have explicit data-testid attributes (e.g., data-testid='sidebar-dashboard-link', data-testid='ai-coach-send-button', data-testid='connect-riot-button').",
+    "Implement Sidebar navigation for main SaaS views and Header layout for Marketing Landing / Auth pages.",
+    "Include AI Coach Chat (Claude powered), Weakness Finder Questionnaire, Challenge Generator Cards, Progress Tracker Charts (Recharts), Player Profile, Riot Account connect modal with 'Pending Riot Approval' state, Valorant Performance page with match history manual input, Plans (Free/Pro/Elite), My Subscription, My Account, and Admin Panel.",
+    "Follow mobile-first responsive principles across all routes."
+  ]
+}
