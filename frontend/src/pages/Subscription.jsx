@@ -3,6 +3,7 @@ import { useOutletContext, Link } from "react-router-dom";
 import { useAuth } from "@clerk/react";
 import { buildApi, fmtBRL } from "@/lib/api";
 import { toast } from "sonner";
+import { label } from "@/lib/labels";
 
 export default function Subscription() {
   const { me, refreshMe } = useOutletContext();
@@ -42,7 +43,7 @@ export default function Subscription() {
 
       <div className="p-6 rounded-2xl border border-white/10 bg-[#12141F] grid sm:grid-cols-2 gap-5">
         <Row label="Plano atual" value={sub.plan_slug.toUpperCase()} highlight/>
-        <Row label="Status" value={<span className={`font-bold ${sub.status === "cancelled" ? "text-red-400" : "text-emerald-400"}`}>{sub.status}</span>}/>
+        <Row label="Status" value={<span className={`font-bold ${sub.status === "cancelled" ? "text-red-400" : "text-emerald-400"}`}>{label(sub.status)}</span>}/>
         <Row label="Conta GAMEIQ" value={me?.email}/>
         <Row label="Valor" value={sub.price_cents === 0 ? "Gratuito" : fmtBRL(sub.price_cents)}/>
         <Row label="Início" value={sub.started_at?.slice(0, 10) || "—"}/>
@@ -74,7 +75,7 @@ export default function Subscription() {
                     <td className="p-3 font-mono">{p.created_at?.slice(0, 10)}</td>
                     <td className="p-3 uppercase">{p.plan_slug}</td>
                     <td className="p-3 font-mono">{fmtBRL(p.amount_cents)}</td>
-                    <td className="p-3"><span className="px-2 py-0.5 rounded-full text-xs bg-amber-500/15 text-amber-300">{p.status}</span></td>
+                    <td className="p-3"><span className="px-2 py-0.5 rounded-full text-xs bg-amber-500/15 text-amber-300">{label(p.status)}</span></td>
                   </tr>
                 ))}
               </tbody>

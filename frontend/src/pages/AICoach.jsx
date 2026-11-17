@@ -3,6 +3,7 @@ import { useAuth } from "@clerk/react";
 import { API } from "@/lib/api";
 import { buildApi } from "@/lib/api";
 import { Send, Trash2, Brain } from "lucide-react";
+import ReactMarkdown from "react-markdown";
 import { toast } from "sonner";
 
 export default function AICoach() {
@@ -91,7 +92,9 @@ export default function AICoach() {
               m.role === "user"
                 ? "bg-gradient-to-br from-purple-600 to-purple-500 text-white"
                 : "bg-[#12141F] border border-white/10 text-slate-200"}`}>
-              {m.content || (streaming && i === messages.length - 1 ? <span className="pulse-dot inline-block w-2 h-2 rounded-full bg-cyan-400"/> : null)}
+              {m.role === "assistant" && m.content ? (
+                <div className="prose-coach"><ReactMarkdown>{m.content}</ReactMarkdown></div>
+              ) : m.content || (streaming && i === messages.length - 1 ? <span className="pulse-dot inline-block w-2 h-2 rounded-full bg-cyan-400"/> : null)}
             </div>
           </div>
         ))}

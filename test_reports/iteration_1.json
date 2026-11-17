@@ -1,0 +1,58 @@
+{
+  "summary": "Iteration 1: full backend (36 pytest cases, real Clerk sessions + real Claude) + frontend E2E (Clerk sign-in tickets, desktop 1920 + mobile 390). All requested features work: auth guard 401s, /me auto-create + PATCH, matches CRUD + stats aggregates + cross-user 404, demo subscription with email confirmation + payments + cancel, Riot manual link with pending-approval notice, challenges CRUD + AI generation, Weakness analysis, SSE chat streaming (proper spaces, [DONE], history persisted), free-plan 402 limit, admin 403/list/role change/409 last-admin/plan price edit. Only 1 backend test failed (Riot ID validation edge case). A few UX/logic issues are listed below.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/riot/link", "issue": "Validation only checks '#' in string: 'Name#' and '#TAG' return 200 and get linked with empty name/tag. Should require non-empty name and tag (e.g. regex ^[^#]{3,16}#[A-Za-z0-9]{2,5}$)."},
+      {"endpoint": "GET /api/subscription (after /api/subscription/cancel)", "issue": "Returns plan_slug of the latest (cancelled) subscription ('pro') while user.plan_slug is 'free' and price_cents comes from the user plan (0). UI shows 'Plano atual: PRO / cancelled / Gratuito / Forma de pagamento: Modo Demonstração'. Should report plan_slug from member.plan_slug (free) after cancel."},
+      {"endpoint": "POST /api/ai/chat", "issue": "Free limit counts all-time user messages, but plan copy says '10 mensagens AI Coach/mês'. Also clearing history (DELETE /api/ai/history) resets the counter, so free users can bypass the limit indefinitely. Store a separate usage counter per month."},
+      {"endpoint": "POST /api/ai/chat", "issue": "New LlmChat instance per request; previous history from db.ai_chat is not passed to the model, so the coach has no conversational memory between messages."},
+      {"endpoint": "GET /api/stats/summary", "issue": "timeline uses matches[-20:] on a list sorted DESC -> returns the OLDEST 20 matches once a user has >20 matches. Should be list(reversed(matches[:20]))."},
+      {"endpoint": "POST /api/ai/generate-challenge, POST /api/challenges", "issue": "Plan gating not enforced: Free plan says '3 desafios manuais' and AI challenges are Pro feature, but free users can generate unlimited AI challenges and create unlimited challenges."},
+      {"endpoint": "POST /api/matches", "issue": "No value validation: result accepts any string; negative kills/deaths/acs and kast >100 accepted."},
+      {"endpoint": "current_member / _clerk_user", "issue": "Synchronous requests.get to Clerk API inside async dependency (blocks event loop on first request of each user; called twice). Use run_in_threadpool or httpx.AsyncClient."},
+      {"endpoint": "GET /api/admin/payments, /api/admin/subscriptions", "issue": "Not filtered by env (IN_ENV) unlike /admin/users; preview/live data would mix."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Subscription page after cancel", "issue": "Shows 'PLANO ATUAL: PRO' with status 'cancelled' and value 'Gratuito' while header badge says PLANO FREE (inconsistent, root cause is backend GET /api/subscription).", "selector": "[data-testid='subscription-page']", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "AI Coach / Weakness Finder", "issues": ["Claude replies are Markdown but rendered as plain text — raw '**bold**' and '## heading' markers visible. Use react-markdown."]},
+      {"screen": "Subscription / Riot / Performance", "issues": ["Raw internal codes shown to users: 'active_demo', 'cancelled', 'manual_linked_pending_riot_approval', match result 'win'/'loss', difficulty 'easy'. Map to pt-BR labels (Ativo (demo), Cancelado, Vitória...)."]},
+      {"screen": "Sign-in / Sign-up (Clerk)", "issues": ["Dark theme OK, but Clerk UI is in English ('Continue to GAMEIQ', 'Email address') in a pt-BR app — add @clerk/localizations ptBR."]},
+      {"screen": "Landing", "issues": ["'Ver planos' CTA (landing-plans-cta) links to protected /plans, so signed-out visitors get bounced to sign-in instead of seeing prices; point to #plans."]},
+      {"screen": "Admin > Pagamentos", "issues": ["Shows raw Clerk user_id instead of user email/name."]},
+      {"screen": "Challenges", "issues": ["No UI to create a manual challenge (backend POST /api/challenges exists; Free plan advertises '3 desafios manuais')."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_gameiq_api.py", "/app/backend/tests/conftest.py", "/app/test_reports/pytest/pytest_results.xml"],
+  "action_items": [
+    "Tighten Riot ID validation (non-empty name and tag)",
+    "Fix GET /api/subscription to reflect member.plan_slug after cancel (and UI labels)",
+    "Fix stats timeline to use latest 20 matches (matches[:20] reversed)",
+    "Make free AI limit monthly and not resettable by clearing history; optionally gate AI challenges/limit manual challenges per plan",
+    "Pass prior chat history to Claude for conversational memory",
+    "Render AI Markdown (react-markdown) in AI Coach and Weakness result",
+    "Translate status codes to pt-BR labels; add Clerk ptBR localization",
+    "Validate MatchIn values (result enum, non-negative ints, kast 0-100)",
+    "Make Clerk API calls in current_member non-blocking"
+  ],
+  "critical_code_review_comments": [
+    "server.py is 576 lines - consider splitting routers (ai, admin, subscription, matches) before it grows past 700",
+    "_clerk_user is invoked twice for new users (admin check + profile) and synchronously - cache result and run async",
+    "generate_challenge: `import json, re` inside handler; broad except converts JSON parse errors to 502",
+    "Frontend: multiple pages lack loading/error states on GET (e.g. Performance/Challenges .then without catch); Account save has no try/catch",
+    "AICoach decodes literal '\\n' in model text to newline (escape collision) - use JSON-encoded SSE payloads"
+  ],
+  "updated_files": ["/app/backend/tests/conftest.py", "/app/backend/tests/test_gameiq_api.py"],
+  "success_rate": {"backend": "97% (35/36)", "frontend": "100% of requested flows functional; 1 data-consistency bug + design issues"},
+  "test_credentials": "Used /app/memory/test_credentials.md guidance. Tests create temporary Clerk users (test_*+clerk_test@gameiq.com) via Clerk Backend API, sessions/tokens via /v1/sessions and sign-in tickets via /v1/sign_in_tokens; all created users and their db docs were deleted afterwards. Admin test user role set in db.users.",
+  "seed_data_creation": "None persisted. Temporary TEST users/matches/challenges/subscriptions/payments/ai_chat were deleted by user_id. Pro/Elite plan prices were edited during admin tests and restored (4990/9990).",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run: cd /app/backend && python -m pytest tests/ -v. conftest.ClerkUser creates Clerk users + sessions and refreshes 60s JWTs; admin_user fixture sets role=admin in db. Keep all tests in one module (xdist loadscope) so the 'only admin -> 409' check is valid. For UI, create sign-in tickets via POST https://api.clerk.com/v1/sign_in_tokens and open /sign-in?__clerk_ticket=<t>. Expected failing test until fixed: test_riot_link_empty_parts.",
+  "rca of the issue": "Subscription inconsistency: get_subscription reads the latest subscriptions doc (cancel only flips status, plan_slug stays 'pro') but price from member.plan_slug ('free'). Timeline bug: matches sorted played_at DESC, then slicing [-20:] takes the oldest entries."
+}

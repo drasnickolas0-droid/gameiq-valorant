@@ -14,7 +14,15 @@ from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pymongo import ASCENDING, DESCENDING, IndexModel, ReturnDocument
-from pydantic import BaseModel, ConfigDict
+import re
+import json
+from typing import Literal
+from pydantic import BaseModel, ConfigDict, Field
+from starlette.concurrency import run_in_threadpool
+
+RIOT_ID_RE = re.compile(r"^[^#]{3,16}#[A-Za-z0-9]{2,5}$")
+FREE_AI_MONTHLY = 10
+FREE_MANUAL_CHALLENGES = 3
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -46,6 +54,7 @@ INDEXES: dict[str, list[IndexModel]] = {
     "matches": [IndexModel([("user_id", ASCENDING), ("played_at", DESCENDING)], name="user_played")],
     "riot_accounts": [IndexModel([("user_id", ASCENDING)], name="user_id", unique=True)],
     "ai_chat": [IndexModel([("user_id", ASCENDING), ("created_at", ASCENDING)], name="user_created")],
+    "ai_usage": [IndexModel([("user_id", ASCENDING), ("month", ASCENDING)], name="user_month", unique=True)],
 }
 
 
@@ -81,9 +90,10 @@ class ChangePlanIn(BaseModel):
     plan_slug: str; confirm_email: str
 
 class MatchIn(BaseModel):
-    agent: str; map: str; result: str
-    kills: int; deaths: int; assists: int
-    acs: int; adr: int; kast: int
+    agent: str = Field(min_length=1, max_length=30); map: str = Field(min_length=1, max_length=30)
+    result: Literal["win", "loss", "draw"]
+    kills: int = Field(ge=0, le=200); deaths: int = Field(ge=0, le=200); assists: int = Field(ge=0, le=200)
+    acs: int = Field(ge=0, le=1000); adr: int = Field(ge=0, le=1000); kast: int = Field(ge=0, le=100)
     played_at: Optional[str] = None; notes: Optional[str] = None
 
 class ChallengeIn(BaseModel):
@@ -129,9 +139,9 @@ async def current_member(user: dict = Depends(require_user)) -> dict:
     uid = user["user_id"]
     member = await db.users.find_one({"user_id": uid}, {"_id": 0})
     if member is None or not member.get("role"):
-        role = "admin" if _is_admin_email(uid) else DEFAULT_ROLE
+        role = "admin" if await run_in_threadpool(_is_admin_email, uid) else DEFAULT_ROLE
         try:
-            cu = _clerk_user(uid)
+            cu = await run_in_threadpool(_clerk_user, uid)
             emails = cu.get("email_addresses", [])
             pid = cu.get("primary_email_address_id")
             email = next((e["email_address"] for e in emails if e["id"] == pid),
@@ -222,7 +232,7 @@ async def update_me(body: ProfileUpdate, member: dict = Depends(current_member))
 async def delete_me(member: dict = Depends(current_member)):
     uid = member["user_id"]
     for coll in ("users", "subscriptions", "payments", "challenges", "matches",
-                 "riot_accounts", "ai_chat"):
+                 "riot_accounts", "ai_chat", "ai_usage"):
         await db[coll].delete_many({"user_id": uid})
     try:
         requests.delete(f"https://api.clerk.com/v1/users/{uid}", timeout=10,
@@ -237,8 +247,8 @@ async def get_subscription(member: dict = Depends(current_member)):
     sub = await db.subscriptions.find_one({"user_id": member["user_id"]}, {"_id": 0},
                                           sort=[("created_at", -1)])
     plan = await db.plans.find_one({"slug": member.get("plan_slug", "free")}, {"_id": 0})
-    if not sub:
-        return {"user_id": member["user_id"], "plan_slug": "free", "status": "active",
+    if not sub or sub["status"] == "cancelled":
+        return {"user_id": member["user_id"], "plan_slug": member.get("plan_slug", "free"), "status": "active",
                 "started_at": member.get("created_at"), "next_billing_at": None,
                 "payment_method": None, "price_cents": 0, "currency": "BRL",
                 "account_email": member.get("email", "")}
@@ -261,13 +271,14 @@ async def change_subscription(body: ChangePlanIn, member: dict = Depends(current
            "status": "active_demo" if body.plan_slug != "free" else "active",
            "started_at": now_iso(), "next_billing_at": None,
            "payment_method": "Modo Demonstração" if body.plan_slug != "free" else None,
-           "demo": body.plan_slug != "free", "created_at": now_iso()}
+           "demo": body.plan_slug != "free", "env": ENV, "created_at": now_iso()}
     await db.subscriptions.insert_one(sub)
     await db.users.update_one({"user_id": member["user_id"]}, {"$set": {"plan_slug": body.plan_slug}})
     if body.plan_slug != "free":
         await db.payments.insert_one({"id": str(uuid.uuid4()), "user_id": member["user_id"],
             "plan_slug": body.plan_slug, "amount_cents": plan["price_cents"],
-            "currency": plan["currency"], "status": "demo", "created_at": now_iso()})
+            "currency": plan["currency"], "status": "demo", "env": ENV,
+            "email": member.get("email", ""), "created_at": now_iso()})
     return {"ok": True, "demo": body.plan_slug != "free"}
 
 
@@ -335,7 +346,7 @@ async def _stats_summary(uid: str) -> dict:
 
     timeline = [{"date": m["played_at"][:10], "acs": m["acs"],
                  "kd": round(m["kills"]/max(m["deaths"], 1), 2), "kast": m["kast"]}
-                for m in reversed(matches[-20:])]
+                for m in reversed(matches[:20])]
     return {"total": total, "wins": wins, "losses": losses,
             "win_rate": round(wins / total * 100),
             "kd": round(k / d, 2), "acs": avg("acs"), "adr": avg("adr"), "kast": avg("kast"),
@@ -356,6 +367,10 @@ async def list_challenges(member: dict = Depends(current_member)):
 
 @api_router.post("/challenges")
 async def add_challenge(body: ChallengeIn, member: dict = Depends(current_member)):
+    if member.get("plan_slug", "free") == "free":
+        active = await db.challenges.count_documents({"user_id": member["user_id"], "completed": False})
+        if active >= FREE_MANUAL_CHALLENGES:
+            raise HTTPException(status_code=402, detail="Plano Free permite 3 desafios ativos. Conclua um ou faça upgrade.")
     doc = {"id": str(uuid.uuid4()), "user_id": member["user_id"], **body.model_dump(),
            "completed": False, "created_at": now_iso()}
     await db.challenges.insert_one(doc)
@@ -381,10 +396,11 @@ async def get_riot(member: dict = Depends(current_member)):
 
 @api_router.post("/riot/link")
 async def link_riot(body: RiotLinkIn, member: dict = Depends(current_member)):
-    if "#" not in body.riot_id:
-        raise HTTPException(status_code=400, detail="Riot ID deve estar no formato Nome#TAG")
-    name, tag = body.riot_id.split("#", 1)
-    doc = {"user_id": member["user_id"], "riot_id": body.riot_id,
+    riot_id = body.riot_id.strip()
+    if not RIOT_ID_RE.match(riot_id):
+        raise HTTPException(status_code=400, detail="Riot ID deve estar no formato Nome#TAG (nome 3-16, tag 2-5 letras/números)")
+    name, tag = riot_id.split("#", 1)
+    doc = {"user_id": member["user_id"], "riot_id": riot_id,
            "riot_name": name, "riot_tag": tag, "region": body.region, "manual": True,
            "integration_status": "manual_linked_pending_riot_approval",
            "linked_at": now_iso(), "last_sync": now_iso(), "connected": True}
@@ -419,14 +435,21 @@ o que o jogador te passou. Respostas concisas (3-6 parágrafos curtos ou lista o
 
 @api_router.post("/ai/chat")
 async def ai_chat(body: AICoachIn, member: dict = Depends(current_member)):
-    if member["plan_slug"] == "free":
-        count = await db.ai_chat.count_documents({"user_id": member["user_id"], "role": "user"})
-        if count >= 10:
-            raise HTTPException(status_code=402, detail="Limite do plano Free atingido. Faça upgrade para Pro.")
+    month = datetime.now(timezone.utc).strftime("%Y-%m")
+    if member.get("plan_slug", "free") == "free":
+        usage = await db.ai_usage.find_one({"user_id": member["user_id"], "month": month}, {"_id": 0})
+        if usage and usage.get("count", 0) >= FREE_AI_MONTHLY:
+            raise HTTPException(status_code=402, detail="Limite mensal do plano Free atingido (10 mensagens). Faça upgrade para Pro.")
+    await db.ai_usage.update_one({"user_id": member["user_id"], "month": month},
+                                 {"$inc": {"count": 1}}, upsert=True)
 
     from emergentintegrations.llm.chat import LlmChat, UserMessage, TextDelta, StreamDone
 
     session_id = body.session_id or str(uuid.uuid4())
+    recent = await db.ai_chat.find({"user_id": member["user_id"]}, {"_id": 0, "role": 1, "content": 1}) \
+        .sort("created_at", -1).limit(10).to_list(10)
+    history = "\n".join(f"{'Jogador' if m['role'] == 'user' else 'Coach'}: {m['content'][:800]}"
+                        for m in reversed(recent))
     stats = await _stats_summary(member["user_id"])
     riot = await db.riot_accounts.find_one({"user_id": member["user_id"]}, {"_id": 0})
     context = (f"Dados do jogador — Riot ID: {riot['riot_id'] if riot else 'não conectado'}. "
@@ -439,7 +462,8 @@ async def ai_chat(body: AICoachIn, member: dict = Depends(current_member)):
     chat = LlmChat(
         api_key=os.environ["EMERGENT_LLM_KEY"],
         session_id=f"gameiq-{member['user_id']}-{session_id}",
-        system_message=SYSTEM_PROMPT + "\n\n" + context,
+        system_message=SYSTEM_PROMPT + "\n\n" + context +
+            (f"\n\nConversa recente (para contexto):\n{history}" if history else ""),
     ).with_model("anthropic", "claude-sonnet-5-5")
 
     async def event_generator() -> AsyncGenerator[str, None]:
@@ -482,6 +506,8 @@ async def weakness_analyze(body: WeaknessAnswersIn, member: dict = Depends(curre
 
 @api_router.post("/ai/generate-challenge")
 async def generate_challenge(member: dict = Depends(current_member)):
+    if member.get("plan_slug", "free") == "free":
+        raise HTTPException(status_code=402, detail="Desafios gerados por IA são exclusivos dos planos Pro e Elite.")
     from emergentintegrations.llm.chat import LlmChat, UserMessage
     stats = await _stats_summary(member["user_id"])
     prompt = (f"Com base nestas stats ({stats['total']} jogos, WR {stats['win_rate']}%, "
@@ -493,7 +519,6 @@ async def generate_challenge(member: dict = Depends(current_member)):
         system_message=SYSTEM_PROMPT).with_model("anthropic", "claude-sonnet-5-5")
     try:
         resp = await chat.send_message(UserMessage(text=prompt))
-        import json, re
         m = re.search(r"\{.*\}", resp, re.DOTALL)
         data = json.loads(m.group(0)) if m else {"title": "Desafio diário",
             "description": resp[:200], "difficulty": "medium"}
@@ -543,12 +568,21 @@ async def admin_update_plan(slug: str, body: PlanUpdate, admin: dict = Depends(r
 
 @api_router.get("/admin/payments")
 async def admin_payments(admin: dict = Depends(require_role("admin"))):
-    return await db.payments.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    pays = await db.payments.find(IN_ENV, {"_id": 0}).sort("created_at", -1).to_list(500)
+    missing = {p["user_id"] for p in pays if not p.get("email")}
+    if missing:
+        users = await db.users.find({"user_id": {"$in": list(missing)}}, {"_id": 0, "user_id": 1, "email": 1}).to_list(1000)
+        emails = {u["user_id"]: u.get("email", "") for u in users}
+        for p in pays:
+            p.setdefault("email", emails.get(p["user_id"], ""))
+            if not p["email"]:
+                p["email"] = emails.get(p["user_id"], "")
+    return pays
 
 
 @api_router.get("/admin/subscriptions")
 async def admin_subs(admin: dict = Depends(require_role("admin"))):
-    return await db.subscriptions.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    return await db.subscriptions.find(IN_ENV, {"_id": 0}).sort("created_at", -1).to_list(500)
 
 
 app.include_router(clerk_router)

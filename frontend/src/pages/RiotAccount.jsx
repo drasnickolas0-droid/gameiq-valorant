@@ -4,6 +4,7 @@ import { useAuth } from "@clerk/react";
 import { buildApi } from "@/lib/api";
 import { Gamepad2, Link2, Unlink, AlertTriangle, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
+import { label } from "@/lib/labels";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from "@/components/ui/dialog";
@@ -67,7 +68,7 @@ export default function RiotAccount() {
               <div className="text-[11px] uppercase tracking-widest text-cyan-400">Riot ID vinculado</div>
               <div className="font-mono text-2xl font-bold mt-1">{riot.riot_id}</div>
               <div className="text-xs text-slate-400 mt-1">Região: <span className="font-mono text-white">{riot.region?.toUpperCase()}</span> · Última sinc.: <span className="font-mono">{riot.last_sync?.slice(0, 10)}</span></div>
-              <div className="text-[11px] text-amber-300 mt-1">{riot.integration_status}</div>
+              <div className="text-[11px] text-amber-300 mt-1">{label(riot.integration_status)}</div>
             </div>
             <div className="flex gap-2">
               <button data-testid="riot-sync" onClick={() => toast.info("Integração oficial pendente — sincronização manual disponível via página Valorant Performance.")} className="px-4 py-2 rounded-lg border border-white/10 inline-flex items-center gap-2 text-sm"><RefreshCw size={14}/> Sinc.</button>

@@ -3,6 +3,7 @@ import { useOutletContext, Navigate } from "react-router-dom";
 import { useAuth } from "@clerk/react";
 import { buildApi, fmtBRL } from "@/lib/api";
 import { toast } from "sonner";
+import { label } from "@/lib/labels";
 import { Shield, Users, CreditCard, Crown, Edit } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
@@ -79,7 +80,7 @@ export default function Admin() {
                   <td className="p-3">
                     <select data-testid={`role-select-${u.user_id}`} value={u.role} onChange={(e) => changeRole(u.user_id, e.target.value)}
                       className="bg-[#0c0e1a] border border-white/10 rounded px-2 py-1">
-                      {roles.map((r) => <option key={r} value={r}>{r}</option>)}
+                      {roles.map((r) => <option key={r} value={r}>{label(r)}</option>)}
                     </select>
                   </td>
                   <td className="p-3 font-mono text-xs">{u.created_at?.slice(0, 10)}</td>
@@ -111,16 +112,16 @@ export default function Admin() {
           {payments.length === 0 ? <div className="p-6 text-sm text-slate-400">Nenhum pagamento.</div> : (
             <table className="w-full text-sm min-w-[600px]">
               <thead className="bg-white/5 text-xs uppercase tracking-widest text-slate-400">
-                <tr>{["Data", "User ID", "Plano", "Valor", "Status"].map(h => <th key={h} className="text-left p-3">{h}</th>)}</tr>
+                <tr>{["Data", "Usuário", "Plano", "Valor", "Status"].map(h => <th key={h} className="text-left p-3">{h}</th>)}</tr>
               </thead>
               <tbody>
                 {payments.map((p) => (
                   <tr key={p.id} className="border-t border-white/5">
                     <td className="p-3 font-mono text-xs">{p.created_at?.slice(0, 16)?.replace("T", " ")}</td>
-                    <td className="p-3 font-mono text-xs">{p.user_id}</td>
+                    <td className="p-3 font-mono text-xs">{p.email || p.user_id}</td>
                     <td className="p-3 uppercase">{p.plan_slug}</td>
                     <td className="p-3 font-mono">{fmtBRL(p.amount_cents)}</td>
-                    <td className="p-3">{p.status}</td>
+                    <td className="p-3">{label(p.status)}</td>
                   </tr>
                 ))}
               </tbody>

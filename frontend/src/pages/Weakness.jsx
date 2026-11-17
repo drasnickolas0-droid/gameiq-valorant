@@ -3,6 +3,7 @@ import { useAuth } from "@clerk/react";
 import { buildApi } from "@/lib/api";
 import { toast } from "sonner";
 import { Target, Sparkles } from "lucide-react";
+import ReactMarkdown from "react-markdown";
 
 const QUESTIONS = [
   { k: "aim", q: "Como avalia sua mira?", opts: ["Fraca", "Mediana", "Boa", "Excelente"] },
@@ -63,8 +64,8 @@ export default function Weakness() {
       </button>
 
       {result && (
-        <div data-testid="weakness-result" className="p-6 rounded-2xl border border-purple-500/30 bg-purple-500/5 whitespace-pre-wrap text-sm leading-relaxed">
-          {result}
+        <div data-testid="weakness-result" className="p-6 rounded-2xl border border-purple-500/30 bg-purple-500/5 text-sm leading-relaxed prose-coach">
+          <ReactMarkdown>{result}</ReactMarkdown>
         </div>
       )}
     </div>

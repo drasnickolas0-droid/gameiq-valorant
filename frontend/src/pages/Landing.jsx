@@ -1,8 +1,12 @@
 import { Link } from "react-router-dom";
-import { Show, SignInButton } from "@clerk/react";
-import { Brain, Target, Zap, LineChart, Trophy, Shield, ChevronRight, Sparkles } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Show } from "@clerk/react";
+import { API, fmtBRL } from "@/lib/api";
+import { Brain, Target, Zap, LineChart, Trophy, Shield, ChevronRight, Sparkles, Check } from "lucide-react";
 
 export default function Landing() {
+  const [plans, setPlans] = useState([]);
+  useEffect(() => { fetch(`${API}/plans`).then((r) => r.json()).then(setPlans).catch(() => {}); }, []);
   return (
     <div className="min-h-screen bg-[#090A0F] text-white overflow-hidden">
       <header className="fixed top-0 inset-x-0 z-50 backdrop-blur-xl bg-black/40 border-b border-white/5">
@@ -103,13 +107,27 @@ export default function Landing() {
       </section>
 
       <section id="plans" className="py-20 border-t border-white/5 bg-[#0a0b14]">
-        <div className="max-w-5xl mx-auto px-6 text-center">
-          <h2 className="text-3xl sm:text-4xl font-black uppercase tracking-tight">Planos sob medida</h2>
-          <p className="mt-4 text-slate-400">Free, Pro ou Elite — escolha o plano que combina com sua jornada.</p>
-          <Link to="/plans" data-testid="landing-plans-cta"
-            className="inline-flex mt-8 items-center gap-2 px-6 py-3 rounded-xl bg-gradient-to-r from-purple-600 to-cyan-500 font-bold">
-            Ver planos <ChevronRight size={18}/>
-          </Link>
+        <div className="max-w-6xl mx-auto px-6">
+          <h2 className="text-3xl sm:text-4xl font-black uppercase tracking-tight text-center">Planos sob medida</h2>
+          <p className="mt-4 text-slate-400 text-center">Free, Pro ou Elite — escolha o plano que combina com sua jornada.</p>
+          <div className="mt-12 grid md:grid-cols-3 gap-5">
+            {plans.map((p) => (
+              <div key={p.slug} data-testid={`landing-plan-${p.slug}`}
+                className={`relative p-6 rounded-2xl border bg-[#12141F] flex flex-col ${p.highlighted ? "border-purple-500/50 glow-purple" : "border-white/10"}`}>
+                <div className="text-sm font-mono uppercase tracking-widest text-slate-400">{p.name}</div>
+                <div className="font-mono text-4xl font-black mt-3">{p.price_cents === 0 ? "R$ 0" : fmtBRL(p.price_cents)}
+                  {p.price_cents > 0 && <span className="text-xs text-slate-400 font-normal"> / mês</span>}</div>
+                <p className="text-sm text-slate-400 mt-2">{p.tagline}</p>
+                <ul className="mt-5 space-y-2 flex-1">
+                  {p.features.map((f) => <li key={f} className="flex gap-2 text-sm text-slate-300"><Check size={16} className="text-cyan-400 mt-0.5 shrink-0"/> {f}</li>)}
+                </ul>
+                <Link to="/sign-up" data-testid={`landing-plan-cta-${p.slug}`}
+                  className={`mt-6 text-center py-3 rounded-xl font-bold ${p.highlighted ? "bg-gradient-to-r from-purple-600 to-cyan-500" : "border border-white/10 hover:bg-white/5"}`}>
+                  {p.price_cents === 0 ? "Começar grátis" : `Assinar ${p.name}`}
+                </Link>
+              </div>
+            ))}
+          </div>
         </div>
       </section>
 

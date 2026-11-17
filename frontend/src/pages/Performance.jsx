@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useAuth } from "@clerk/react";
 import { buildApi } from "@/lib/api";
 import { toast } from "sonner";
+import { label } from "@/lib/labels";
 import { Plus, Trash2 } from "lucide-react";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
@@ -31,7 +32,7 @@ export default function Performance() {
     try {
       await buildApi(getToken).post("/matches", form);
       toast.success("Partida registrada"); setShow(false); load();
-    } catch { toast.error("Erro ao salvar"); }
+    } catch (e) { toast.error(typeof e.response?.data?.detail === "string" ? e.response.data.detail : "Valores inválidos — confira os campos"); }
   };
   const del = async (id) => { await buildApi(getToken).delete(`/matches/${id}`); load(); };
 
@@ -85,7 +86,7 @@ export default function Performance() {
                     <td className="p-3 font-mono text-xs">{m.played_at?.slice(0, 10)}</td>
                     <td className="p-3">{m.agent}</td>
                     <td className="p-3">{m.map}</td>
-                    <td className="p-3"><span className={`font-mono text-xs px-2 py-0.5 rounded-full ${m.result === "win" ? "bg-emerald-500/15 text-emerald-300" : m.result === "loss" ? "bg-red-500/15 text-red-300" : "bg-slate-500/15"}`}>{m.result}</span></td>
+                    <td className="p-3"><span className={`font-mono text-xs px-2 py-0.5 rounded-full ${m.result === "win" ? "bg-emerald-500/15 text-emerald-300" : m.result === "loss" ? "bg-red-500/15 text-red-300" : "bg-slate-500/15"}`}>{label(m.result)}</span></td>
                     <td className="p-3 font-mono">{m.kills}/{m.deaths}/{m.assists}</td>
                     <td className="p-3 font-mono">{m.acs}</td>
                     <td className="p-3 font-mono">{m.adr}</td>
